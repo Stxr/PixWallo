@@ -54,23 +54,46 @@ class SlideshowService : Service() {
         if (job?.isActive == true) return
         startForegroundWithStatus("壁纸轮播已开启", "正在切换...")
         job = scope.launch {
-            val uris = selectionRepo.selectedFlow.first()
-            val cfg = settingsRepo.configFlow.first()
-            if (uris.isEmpty()) {
-                stopSelf()
-                return@launch
-            }
-            val order =
-                if (cfg.order == PlaybackOrder.RANDOM) uris.shuffled(Random(System.currentTimeMillis())) else uris
             val startTime = System.currentTimeMillis()
             var i = 0
+            var currentOrder: List<android.net.Uri>? = null
+            var lastOrderType: PlaybackOrder? = null
+            
             while (isActive) {
-                val uri = order[i % order.size]
+                // 每次循环迭代时重新读取配置
+                val uris = selectionRepo.selectedFlow.first()
+                val cfg = settingsRepo.configFlow.first()
+                
+                if (uris.isEmpty()) {
+                    stopSelf()
+                    return@launch
+                }
+                
+                // 检测到播放顺序变化时，重新生成播放顺序列表
+                val shouldRegenerate = currentOrder == null || 
+                    lastOrderType != cfg.order || 
+                    currentOrder.size != uris.size ||
+                    currentOrder.toSet() != uris.toSet()
+                
+                if (shouldRegenerate) {
+                    currentOrder = if (cfg.order == PlaybackOrder.RANDOM) {
+                        uris.shuffled(Random(System.currentTimeMillis()))
+                    } else {
+                        uris
+                    }
+                    lastOrderType = cfg.order
+                    // 重置索引，从新列表的第一张开始
+                    i = 0
+                }
+                
+                val uri = currentOrder!![i % currentOrder!!.size]
                 applyUri(uri, cfg.applyScope)
+                
                 val elapsed = System.currentTimeMillis() - startTime
                 if (cfg.maxDurationMs != null && elapsed >= cfg.maxDurationMs) {
                     break
                 }
+                
                 delay(cfg.perItemMs)
                 i++
             }
@@ -120,6 +143,7 @@ class SlideshowService : Service() {
         val uris = selectionRepo.selectedFlow.first()
         val cfg = settingsRepo.configFlow.first()
         if (uris.isEmpty()) return
+        // 每次手动切换时重新读取配置并生成顺序列表
         val list =
             if (cfg.order == PlaybackOrder.RANDOM) uris.shuffled(Random(System.currentTimeMillis())) else uris
         val index = if (delta >= 0) 1 else list.size - 1

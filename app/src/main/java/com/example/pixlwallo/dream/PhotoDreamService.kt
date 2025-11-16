@@ -146,14 +146,38 @@ class PhotoDreamService : DreamService() {
         val job = Job()
         scope = CoroutineScope(Dispatchers.Default + job)
         scope?.launch {
-            val uris = selectionRepo.selectedFlow.first()
-            if (uris.isEmpty()) return@launch
-            val cfg = settingsRepo.configFlow.first()
-            val list = if (cfg.order.name == "RANDOM") uris.shuffled(Random(System.currentTimeMillis())) else uris
-            
+            var currentOrder: List<android.net.Uri>? = null
+            var lastOrderType: com.example.pixlwallo.model.PlaybackOrder? = null
             var i = 0
+            
             while (isActive) {
-                val uri = list[i % list.size]
+                // 每次循环迭代时重新读取配置
+                val uris = selectionRepo.selectedFlow.first()
+                if (uris.isEmpty()) {
+                    delay(1000) // 如果列表为空，等待1秒后重试
+                    continue
+                }
+                
+                val cfg = settingsRepo.configFlow.first()
+                
+                // 检测到播放顺序变化时，重新生成播放顺序列表
+                val shouldRegenerate = currentOrder == null || 
+                    lastOrderType?.name != cfg.order.name || 
+                    currentOrder.size != uris.size ||
+                    currentOrder.toSet() != uris.toSet()
+                
+                if (shouldRegenerate) {
+                    currentOrder = if (cfg.order.name == "RANDOM") {
+                        uris.shuffled(Random(System.currentTimeMillis()))
+                    } else {
+                        uris
+                    }
+                    lastOrderType = cfg.order
+                    // 重置索引，从新列表的第一张开始
+                    i = 0
+                }
+                
+                val uri = currentOrder!![i % currentOrder!!.size]
                 // 不指定固定尺寸，让 ImageView 的 CENTER_CROP 来处理裁剪
                 // 这样可以保持图片的原始宽高比，不会被拉伸
                 val req = ImageRequest.Builder(this@PhotoDreamService)
