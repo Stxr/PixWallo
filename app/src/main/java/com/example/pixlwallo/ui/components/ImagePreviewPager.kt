@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -16,6 +17,9 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -40,6 +44,8 @@ import com.example.pixlwallo.util.ExifReader
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -66,23 +72,88 @@ fun ImagePreviewPager(
     val context = LocalContext.current
     val settingsRepo = remember(context) { SettingsRepository(context) }
     val cfg by settingsRepo.configFlow.collectAsState(initial = PlaybackConfig())
+    
     val pagerState = rememberPagerState(
         initialPage = initialPage.coerceIn(0, images.size.coerceAtLeast(1) - 1),
         pageCount = { images.size.coerceAtLeast(1) }
     )
+    
     val errorUris = remember { mutableStateMapOf<Int, Boolean>() }
     var showExifInfo by remember { mutableStateOf(false) }
     var currentExif by remember { mutableStateOf<ExifInfo?>(null) }
     val exifCache = remember { mutableStateMapOf<Int, ExifInfo?>() }
     val scope = rememberCoroutineScope()
-
-    // 自动播放逻辑
+    
+    // 跟踪是否是用户手动滑动
+    var isUserSwipe by remember { mutableStateOf(false) }
+    var autoPlayJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    
+    // 监听页面变化，检测用户手动滑动
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.isScrollInProgress }
+            .distinctUntilChanged()
+            .filter { it }
+            .collect {
+                // 用户开始滑动，标记为用户滑动
+                // 不立即取消 Job，让循环自然检查 isScrollInProgress 来跳过切换
+                isUserSwipe = true
+            }
+    }
+    
+    // 监听滑动结束，恢复自动播放
+    LaunchedEffect(pagerState, autoPlay, cfg.perItemMs, images) {
+        snapshotFlow { pagerState.isScrollInProgress }
+            .distinctUntilChanged()
+            .filter { !it && isUserSwipe }
+            .collect {
+                // 用户滑动结束，重置标志
+                isUserSwipe = false
+                // 重新启动自动播放（如果启用）
+                if (autoPlay && images.isNotEmpty()) {
+                    autoPlayJob?.cancel()
+                    autoPlayJob = scope.launch {
+                        // 初始延迟
+                        delay(cfg.perItemMs)
+                        
+                        while (isActive && autoPlay && images.isNotEmpty()) {
+                            // 检查是否正在滑动
+                            if (!pagerState.isScrollInProgress) {
+                                moveToNextPage(pagerState, images)
+                            }
+                            // 等待指定时间后继续下一次
+                            delay(cfg.perItemMs)
+                        }
+                    }
+                }
+            }
+    }
+    
+    // 自动播放逻辑（初始启动）
     LaunchedEffect(images, cfg.perItemMs, autoPlay) {
-        if (!autoPlay || images.isEmpty()) return@LaunchedEffect
-        while (isActive && autoPlay) {
+        if (!autoPlay || images.isEmpty()) {
+            autoPlayJob?.cancel()
+            autoPlayJob = null
+            return@LaunchedEffect
+        }
+        
+        // 取消之前的任务
+        autoPlayJob?.cancel()
+        
+        // 如果用户正在滑动，等待滑动结束
+        if (pagerState.isScrollInProgress) return@LaunchedEffect
+        
+        autoPlayJob = scope.launch {
+            // 初始延迟
             delay(cfg.perItemMs)
-            val next = (pagerState.currentPage + 1) % images.size
-            if (images.isNotEmpty()) pagerState.animateScrollToPage(next)
+            
+            while (isActive && autoPlay && images.isNotEmpty()) {
+                // 检查是否正在滑动
+                if (!pagerState.isScrollInProgress) {
+                    moveToNextPage(pagerState, images)
+                }
+                // 等待指定时间后继续下一次
+                delay(cfg.perItemMs)
+            }
         }
     }
 
@@ -104,6 +175,7 @@ fun ImagePreviewPager(
             }
         }
     }
+    
 
     Box(
         modifier = Modifier
@@ -252,6 +324,24 @@ internal fun getAlignmentForPosition(position: ExifPosition): Alignment {
         ExifPosition.BOTTOM_LEFT -> Alignment.BottomStart
         ExifPosition.BOTTOM_RIGHT -> Alignment.BottomEnd
         ExifPosition.CENTER -> Alignment.Center
+    }
+}
+
+/**
+ * 移动到下一页
+ */
+private suspend fun moveToNextPage(
+    pagerState: PagerState,
+    images: List<Uri>
+) {
+    if (images.isEmpty()) return
+    val currentPage = pagerState.currentPage
+    val nextPage = (currentPage + 1) % images.size
+    // 如果已经是最后一页且要循环到第一页，或者下一页和当前页不同
+    if (nextPage != currentPage) {
+        withContext(NonCancellable) {
+            pagerState.animateScrollToPage(nextPage)
+        }
     }
 }
 

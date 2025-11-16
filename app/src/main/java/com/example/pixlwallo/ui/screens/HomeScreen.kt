@@ -99,9 +99,7 @@ fun HomeScreen(nav: NavController) {
             
             // 统计卡片
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { nav.navigate("settings") },
+                modifier = Modifier.fillMaxWidth(),
                 elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(
@@ -113,13 +111,20 @@ fun HomeScreen(nav: NavController) {
                         .fillMaxWidth()
                         .height(IntrinsicSize.Min)
                 ) {
-                    // 背景图片
+                    // 背景图片（可点击，随机切换）
                     if (backgroundImageUri != null) {
                         AsyncImage(
                             model = backgroundImageUri,
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clickable {
+                                    // 随机切换背景图片
+                                    if (selectedImages.isNotEmpty()) {
+                                        backgroundImageUri = selectedImages.random()
+                                    }
+                                }
                         )
                         // 半透明遮罩层，确保文字可读性
                         Box(
@@ -136,9 +141,11 @@ fun HomeScreen(nav: NavController) {
                             .padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        // "已选图片"区域（可点击，跳转到选择图片页）
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.clickable { nav.navigate("picker") }
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Add,
@@ -163,8 +170,11 @@ fun HomeScreen(nav: NavController) {
                         
                         Spacer(Modifier.height(8.dp))
                         
+                        // 设置区域（可点击，跳转到设置页）
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { nav.navigate("settings") },
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column {
