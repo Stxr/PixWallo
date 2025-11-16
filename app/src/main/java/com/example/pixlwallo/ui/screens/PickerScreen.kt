@@ -361,20 +361,6 @@ fun PickerScreen(nav: NavController) {
                                                     }
                                                 }
                                             )
-//                                            .then(
-//                                                if (isSelectionMode) {
-//                                                    Modifier.border(
-//                                                        width = if (isSelected) 4.dp else 2.dp,
-//                                                        color = if (isSelected)
-//                                                            MaterialTheme.colorScheme.primary
-//                                                        else
-//                                                            MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-//                                                        shape = RoundedCornerShape(12.dp)
-//                                                    )
-//                                                } else {
-//                                                    Modifier
-//                                                }
-//                                            )
 
                                     ) {
                                         AsyncImage(
@@ -382,7 +368,7 @@ fun PickerScreen(nav: NavController) {
                                             contentDescription = null,
                                             modifier = Modifier
                                                 .fillMaxSize(),
-                                            contentScale = ContentScale.Crop
+                                            contentScale = ContentScale.Inside
                                         )
                                         // 选择模式下的选中覆盖层
                                         if (isSelectionMode && isSelected) {
