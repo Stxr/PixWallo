@@ -72,40 +72,35 @@ fun ImagePreviewPager(
     val context = LocalContext.current
     val settingsRepo = remember(context) { SettingsRepository(context) }
     val cfg by settingsRepo.configFlow.collectAsState(initial = PlaybackConfig())
-    
-    val pagerState = rememberPagerState(
-        initialPage = initialPage.coerceIn(0, images.size.coerceAtLeast(1) - 1),
-        pageCount = { images.size.coerceAtLeast(1) }
-    )
-    
+
+    val pagerState =
+        rememberPagerState(initialPage = initialPage.coerceIn(0, images.size.coerceAtLeast(1) - 1),
+            pageCount = { images.size.coerceAtLeast(1) * 1000 })
+
     val errorUris = remember { mutableStateMapOf<Int, Boolean>() }
     var showExifInfo by remember { mutableStateOf(false) }
     var currentExif by remember { mutableStateOf<ExifInfo?>(null) }
     val exifCache = remember { mutableStateMapOf<Int, ExifInfo?>() }
     val scope = rememberCoroutineScope()
-    
+
     // 跟踪是否是用户手动滑动
     var isUserSwipe by remember { mutableStateOf(false) }
     var autoPlayJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    
+
     // 监听页面变化，检测用户手动滑动
     LaunchedEffect(pagerState) {
-        snapshotFlow { pagerState.isScrollInProgress }
-            .distinctUntilChanged()
-            .filter { it }
+        snapshotFlow { pagerState.isScrollInProgress }.distinctUntilChanged().filter { it }
             .collect {
                 // 用户开始滑动，标记为用户滑动
                 // 不立即取消 Job，让循环自然检查 isScrollInProgress 来跳过切换
                 isUserSwipe = true
             }
     }
-    
+
     // 监听滑动结束，恢复自动播放
     LaunchedEffect(pagerState, autoPlay, cfg.perItemMs, images) {
-        snapshotFlow { pagerState.isScrollInProgress }
-            .distinctUntilChanged()
-            .filter { !it && isUserSwipe }
-            .collect {
+        snapshotFlow { pagerState.isScrollInProgress }.distinctUntilChanged()
+            .filter { !it && isUserSwipe }.collect {
                 // 用户滑动结束，重置标志
                 isUserSwipe = false
                 // 重新启动自动播放（如果启用）
@@ -114,7 +109,7 @@ fun ImagePreviewPager(
                     autoPlayJob = scope.launch {
                         // 初始延迟
                         delay(cfg.perItemMs)
-                        
+
                         while (isActive && autoPlay && images.isNotEmpty()) {
                             // 检查是否正在滑动
                             if (!pagerState.isScrollInProgress) {
@@ -127,7 +122,7 @@ fun ImagePreviewPager(
                 }
             }
     }
-    
+
     // 自动播放逻辑（初始启动）
     LaunchedEffect(images, cfg.perItemMs, autoPlay) {
         if (!autoPlay || images.isEmpty()) {
@@ -135,17 +130,17 @@ fun ImagePreviewPager(
             autoPlayJob = null
             return@LaunchedEffect
         }
-        
+
         // 取消之前的任务
         autoPlayJob?.cancel()
-        
+
         // 如果用户正在滑动，等待滑动结束
         if (pagerState.isScrollInProgress) return@LaunchedEffect
-        
+
         autoPlayJob = scope.launch {
             // 初始延迟
             delay(cfg.perItemMs)
-            
+
             while (isActive && autoPlay && images.isNotEmpty()) {
                 // 检查是否正在滑动
                 if (!pagerState.isScrollInProgress) {
@@ -162,10 +157,10 @@ fun ImagePreviewPager(
         if (images.isEmpty()) return@LaunchedEffect
         val currentPage = pagerState.currentPage
         val nextPage = (currentPage + 1) % images.size
-        
+
         // 切换页面时隐藏 EXIF 信息
         showExifInfo = false
-        
+
         listOf(currentPage, nextPage).forEach { page ->
             if (page < images.size && !exifCache.containsKey(page)) {
                 scope.launch {
@@ -175,54 +170,48 @@ fun ImagePreviewPager(
             }
         }
     }
-    
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .pointerInput(showExif && cfg.enableExifTap, pagerState.currentPage) {
-                if (showExif && cfg.enableExifTap) {
-                    detectTapGestures(
-                        onTap = {
-                            val currentPage = pagerState.currentPage
-                            val exif = exifCache[currentPage]
-                            if (exif != null) {
-                                currentExif = exif
-                                showExifInfo = !showExifInfo
-                            } else {
-                                // 如果缓存中没有，尝试加载
-                                scope.launch {
-                                    val loadedExif = ExifReader.readExif(context, images[currentPage])
-                                    exifCache[currentPage] = loadedExif
-                                    if (loadedExif != null) {
-                                        currentExif = loadedExif
-                                        showExifInfo = true
-                                    }
-                                }
+
+    Box(modifier = Modifier
+        .fillMaxSize()
+        .background(Color.Black)
+        .pointerInput(showExif && cfg.enableExifTap, pagerState.currentPage) {
+            if (showExif && cfg.enableExifTap) {
+                detectTapGestures(onTap = {
+                    val currentPage = pagerState.currentPage
+                    val exif = exifCache[currentPage]
+                    if (exif != null) {
+                        currentExif = exif
+                        showExifInfo = !showExifInfo
+                    } else {
+                        // 如果缓存中没有，尝试加载
+                        scope.launch {
+                            val loadedExif = ExifReader.readExif(context, images[currentPage])
+                            exifCache[currentPage] = loadedExif
+                            if (loadedExif != null) {
+                                currentExif = loadedExif
+                                showExifInfo = true
                             }
                         }
-                    )
-                }
+                    }
+                })
             }
-    ) {
+        }) {
         if (images.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                androidx.compose.material3.Text("请先选择图片", color = Color.White)
+                Text("请先选择图片", color = Color.White)
             }
         } else {
             HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
                 val hasError = errorUris[page] == true
-                
+
                 Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
+                    modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center
                 ) {
                     if (hasError) {
-                        androidx.compose.material3.Text("无法加载图片", color = Color.White)
+                        Text("无法加载图片", color = Color.White)
                     } else {
-                        AsyncImage(
-                            model = images[page],
+                        AsyncImage(model = images[page % images.size],
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize(),
@@ -231,12 +220,11 @@ fun ImagePreviewPager(
                             },
                             onSuccess = {
                                 errorUris.remove(page)
-                            }
-                        )
+                            })
                     }
                 }
             }
-            
+
             // EXIF 信息悬浮显示（显示在当前页面上）
             if (showExifInfo && currentExif != null && showExif && cfg.enableExifTap) {
                 AnimatedVisibility(
@@ -246,8 +234,7 @@ fun ImagePreviewPager(
                     modifier = Modifier.align(getAlignmentForPosition(cfg.exifPosition))
                 ) {
                     ExifInfoCard(
-                        exif = currentExif!!,
-                        modifier = Modifier.padding(16.dp)
+                        exif = currentExif!!, modifier = Modifier.padding(16.dp)
                     )
                 }
             }
@@ -310,9 +297,7 @@ private fun ExifRow(label: String, value: String) {
             fontWeight = FontWeight.Bold
         )
         Text(
-            text = value,
-            color = Color.White,
-            fontSize = 12.sp
+            text = value, color = Color.White, fontSize = 12.sp
         )
     }
 }
@@ -331,8 +316,7 @@ internal fun getAlignmentForPosition(position: ExifPosition): Alignment {
  * 移动到下一页
  */
 private suspend fun moveToNextPage(
-    pagerState: PagerState,
-    images: List<Uri>
+    pagerState: PagerState, images: List<Uri>
 ) {
     if (images.isEmpty()) return
     val currentPage = pagerState.currentPage
