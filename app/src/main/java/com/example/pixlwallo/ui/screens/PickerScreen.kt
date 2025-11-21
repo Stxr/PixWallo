@@ -29,6 +29,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -68,12 +70,17 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import android.app.Activity
 import androidx.compose.runtime.DisposableEffect
+import com.example.pixlwallo.util.ExifReader
+import com.example.pixlwallo.model.OrientationFilter
+import com.example.pixlwallo.data.SettingsRepository
+import androidx.compose.runtime.collectAsState
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun PickerScreen(nav: NavController) {
     val context = LocalContext.current
     val repo = remember(context) { SelectionRepository(context) }
+    val settingsRepo = remember(context) { SettingsRepository(context) }
     val selected = remember { mutableStateListOf<Uri>() }
     val scope = rememberCoroutineScope()
     val isScanning = remember { mutableStateOf(false) }
@@ -82,6 +89,12 @@ fun PickerScreen(nav: NavController) {
     var isSelectionMode by remember { mutableStateOf(false) }
     var selectedForDeletion by remember { mutableStateOf(setOf<Uri>()) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    // 方向过滤器状态 - 从 SettingsRepository 读取
+    val orientationFilter by settingsRepo.orientationFilterFlow.collectAsState(initial = OrientationFilter.ALL)
+    // 图片方向缓存（Uri -> true表示横屏，false表示竖屏，null表示未知）
+    val imageOrientations = remember { mutableMapOf<Uri, Boolean?>() }
+    // 用于触发重新计算的计数器
+    var orientationUpdateTrigger by remember { mutableStateOf(0) }
 
     val picker =
         rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
@@ -128,6 +141,50 @@ fun PickerScreen(nav: NavController) {
         }
     }
 
+    // 异步加载图片方向信息
+    LaunchedEffect(selected.size, selected.joinToString { it.toString() }) {
+        selected.forEach { uri ->
+            if (!imageOrientations.containsKey(uri)) {
+                // 先设置为null表示正在加载
+                imageOrientations[uri] = null
+                // 触发重新计算，让null的图片先显示
+                orientationUpdateTrigger++
+                scope.launch {
+                    val exifInfo = ExifReader.readExif(context, uri)
+                    val isLandscape = exifInfo?.let { info ->
+                        val width = info.width ?: 0
+                        val height = info.height ?: 0
+                        if (width > 0 && height > 0) {
+                            width > height
+                        } else {
+                            null
+                        }
+                    }
+                    imageOrientations[uri] = isLandscape
+                    // 触发重新计算
+                    orientationUpdateTrigger++
+                }
+            }
+        }
+    }
+
+    // 根据过滤器过滤图片
+    val filteredSelected = remember(selected, orientationFilter, orientationUpdateTrigger) {
+        when (orientationFilter) {
+            OrientationFilter.ALL -> selected
+            OrientationFilter.LANDSCAPE -> selected.filter { uri ->
+                // 如果方向信息还未加载（null），暂时显示该图片
+                val orientation = imageOrientations[uri]
+                orientation == true || orientation == null
+            }
+            OrientationFilter.PORTRAIT -> selected.filter { uri ->
+                // 如果方向信息还未加载（null），暂时显示该图片
+                val orientation = imageOrientations[uri]
+                orientation == false || orientation == null
+            }
+        }
+    }
+
     // 在选择模式下拦截返回键，退出选择模式而不是关闭页面
     BackHandler(enabled = isSelectionMode) {
         isSelectionMode = false
@@ -146,7 +203,11 @@ fun PickerScreen(nav: NavController) {
                         )
                     } else {
                         Text(
-                            "选择图片",
+                            when {
+                                selected.isEmpty() -> "选择图片"
+                                orientationFilter == OrientationFilter.ALL -> "选择图片 (${selected.size} 张)"
+                                else -> "选择图片 (${filteredSelected.size}/${selected.size} 张)"
+                            },
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                         )
@@ -169,18 +230,19 @@ fun PickerScreen(nav: NavController) {
                             modifier = Modifier.padding(horizontal = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            // 全选/取消全选按钮
+                            // 全选/取消全选按钮（基于过滤后的列表）
                             TextButton(
                                 onClick = {
-                                    if (selectedForDeletion.size == selected.size) {
+                                    val filteredSet = filteredSelected.toSet()
+                                    if (selectedForDeletion == filteredSet) {
                                         selectedForDeletion = emptySet()
                                     } else {
-                                        selectedForDeletion = selected.toSet()
+                                        selectedForDeletion = filteredSet
                                     }
                                 }
                             ) {
                                 Text(
-                                    if (selectedForDeletion.size == selected.size) "取消全选" else "全选"
+                                    if (selectedForDeletion == filteredSelected.toSet()) "取消全选" else "全选"
                                 )
                             }
                             // 删除按钮
@@ -206,8 +268,41 @@ fun PickerScreen(nav: NavController) {
                         // 正常模式下的操作按钮
                         Row(
                             modifier = Modifier.padding(horizontal = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
+                            // 方向过滤器
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                FilterChip(
+                                    selected = orientationFilter == OrientationFilter.ALL,
+                                    onClick = { 
+                                        scope.launch {
+                                            settingsRepo.setOrientationFilter(OrientationFilter.ALL)
+                                        }
+                                    },
+                                    label = { Text("全部") }
+                                )
+                                FilterChip(
+                                    selected = orientationFilter == OrientationFilter.LANDSCAPE,
+                                    onClick = { 
+                                        scope.launch {
+                                            settingsRepo.setOrientationFilter(OrientationFilter.LANDSCAPE)
+                                        }
+                                    },
+                                    label = { Text("横屏") }
+                                )
+                                FilterChip(
+                                    selected = orientationFilter == OrientationFilter.PORTRAIT,
+                                    onClick = { 
+                                        scope.launch {
+                                            settingsRepo.setOrientationFilter(OrientationFilter.PORTRAIT)
+                                        }
+                                    },
+                                    label = { Text("竖屏") }
+                                )
+                            }
                             Button(
                                 onClick = {
                                     picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -303,6 +398,34 @@ fun PickerScreen(nav: NavController) {
                         )
                     }
                 }
+            } else if (filteredSelected.isEmpty()) {
+                // 有图片但过滤器没有匹配的图片
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(inner),
+                    contentAlignment = androidx.compose.ui.Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            when (orientationFilter) {
+                                OrientationFilter.LANDSCAPE -> "没有横屏图片"
+                                OrientationFilter.PORTRAIT -> "没有竖屏图片"
+                                else -> "没有匹配的图片"
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "请切换过滤器或添加图片",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    }
+                }
             } else {
                 BoxWithConstraints(modifier = Modifier
                     .fillMaxSize()
@@ -322,7 +445,7 @@ fun PickerScreen(nav: NavController) {
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        val rows = selected.chunked(itemsPerRow)
+                        val rows = filteredSelected.chunked(itemsPerRow)
 
                         items(rows.size) { rowIndex ->
                             val rowItems = rows[rowIndex]
@@ -347,7 +470,7 @@ fun PickerScreen(nav: NavController) {
                                                         }
                                                     } else {
                                                         // 正常模式：预览图片
-                                                        val index = selected.indexOf(uri)
+                                                        val index = filteredSelected.indexOf(uri)
                                                         if (index >= 0) {
                                                             previewIndex.value = index
                                                         }
@@ -451,7 +574,7 @@ fun PickerScreen(nav: NavController) {
                     .background(Color.Black)
             ) {
                 ImagePreviewPager(
-                    images = selected,
+                    images = filteredSelected,
                     initialPage = startIndex,
                     autoPlay = false, // 选择图片预览不自动播放
                     showExif = true,
@@ -491,6 +614,10 @@ fun PickerScreen(nav: NavController) {
                 Button(
                     onClick = {
                         selected.removeAll(selectedForDeletion)
+                        // 同时清除方向缓存
+                        selectedForDeletion.forEach { uri ->
+                            imageOrientations.remove(uri)
+                        }
                         selectedForDeletion = emptySet()
                         isSelectionMode = false
                         showDeleteConfirm = false

@@ -35,7 +35,8 @@
         <service
             android:name=".dream.PhotoDreamService"
             android:exported="true"
-            android:permission="android.permission.BIND_DREAM_SERVICE">
+            android:permission="android.permission.BIND_DREAM_SERVICE"
+            android:screenOrientation="landscape">
             <intent-filter>
                 <action android:name="android.service.dreams.DreamService" />
             </intent-filter>

@@ -50,7 +50,12 @@ import androidx.navigation.NavController
 import com.example.pixlwallo.data.SelectionRepository
 import com.example.pixlwallo.data.SettingsRepository
 import com.example.pixlwallo.model.PlaybackConfig
+import com.example.pixlwallo.model.OrientationFilter
 import com.example.pixlwallo.slideshow.SlideshowService
+import com.example.pixlwallo.util.ExifReader
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.flow.map
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
@@ -65,15 +70,68 @@ fun HomeScreen(nav: NavController) {
     val selectionRepo = rememberSelectionRepo(context)
     val settingsRepo = rememberSettingsRepo(context)
     val selectedImages by selectionRepo.selectedFlow.collectAsState(initial = emptyList())
-    val count = selectedImages.size
     val cfg by settingsRepo.configFlow.collectAsState(initial = PlaybackConfig())
+    val orientationFilter by settingsRepo.orientationFilterFlow.collectAsState(initial = OrientationFilter.ALL)
     val notifPerm = if (Build.VERSION.SDK_INT >= 33) rememberPermissionState(android.Manifest.permission.POST_NOTIFICATIONS) else null
+    val scope = rememberCoroutineScope()
     
-    // 随机选择一张图片作为背景
+    // 图片方向缓存（Uri -> true表示横屏，false表示竖屏，null表示未知）
+    val imageOrientations = remember { mutableMapOf<Uri, Boolean?>() }
+    // 用于触发重新计算的计数器
+    var orientationUpdateTrigger by remember { mutableStateOf(0) }
+    
+    // 异步加载图片方向信息
+    LaunchedEffect(selectedImages.size, selectedImages.joinToString { it.toString() }) {
+        selectedImages.forEach { uri ->
+            if (!imageOrientations.containsKey(uri)) {
+                // 先设置为null表示正在加载
+                imageOrientations[uri] = null
+                // 触发重新计算
+                orientationUpdateTrigger++
+                scope.launch {
+                    val exifInfo = ExifReader.readExif(context, uri)
+                    val isLandscape = exifInfo?.let { info ->
+                        val width = info.width ?: 0
+                        val height = info.height ?: 0
+                        if (width > 0 && height > 0) {
+                            width > height
+                        } else {
+                            null
+                        }
+                    }
+                    imageOrientations[uri] = isLandscape
+                    // 触发重新计算
+                    orientationUpdateTrigger++
+                }
+            }
+        }
+    }
+    
+    // 根据过滤器过滤图片
+    val filteredImages = remember(selectedImages, orientationFilter, orientationUpdateTrigger) {
+        when (orientationFilter) {
+            OrientationFilter.ALL -> selectedImages
+            OrientationFilter.LANDSCAPE -> selectedImages.filter { uri ->
+                // 如果方向信息还未加载（null），暂时显示该图片
+                val orientation = imageOrientations[uri]
+                orientation == true || orientation == null
+            }
+            OrientationFilter.PORTRAIT -> selectedImages.filter { uri ->
+                // 如果方向信息还未加载（null），暂时显示该图片
+                val orientation = imageOrientations[uri]
+                orientation == false || orientation == null
+            }
+        }
+    }
+    
+    val count = filteredImages.size
+    val totalCount = selectedImages.size
+    
+    // 随机选择一张图片作为背景（从过滤后的图片中选择）
     var backgroundImageUri by remember { mutableStateOf<Uri?>(null) }
-    LaunchedEffect(selectedImages) {
-        backgroundImageUri = if (selectedImages.isNotEmpty()) {
-            selectedImages.random()
+    LaunchedEffect(filteredImages) {
+        backgroundImageUri = if (filteredImages.isNotEmpty()) {
+            filteredImages.random()
         } else {
             null
         }
@@ -160,7 +218,11 @@ fun HomeScreen(nav: NavController) {
                                     color = if (backgroundImageUri != null) Color.White.copy(alpha = 0.9f) else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
-                                    text = "$count 张",
+                                    text = when {
+                                        totalCount == 0 -> "0 张"
+                                        orientationFilter == OrientationFilter.ALL -> "$count 张"
+                                        else -> "$count/$totalCount 张"
+                                    },
                                     style = MaterialTheme.typography.headlineMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = if (backgroundImageUri != null) Color.White else MaterialTheme.colorScheme.onSurface
@@ -258,7 +320,7 @@ fun HomeScreen(nav: NavController) {
                     ) {
                         FilledTonalButton(
                             onClick = {
-                                if (count == 0) {
+                                if (filteredImages.isEmpty()) {
                                     Toast.makeText(context, "请先选择至少一张图片", Toast.LENGTH_SHORT).show()
                                     return@FilledTonalButton
                                 }

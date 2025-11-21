@@ -11,6 +11,8 @@ import com.example.pixlwallo.model.ApplyScope
 import com.example.pixlwallo.model.ExifPosition
 import com.example.pixlwallo.model.PlaybackConfig
 import com.example.pixlwallo.model.PlaybackOrder
+import com.example.pixlwallo.model.ImgDisplayMode
+import com.example.pixlwallo.model.OrientationFilter
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -25,6 +27,8 @@ class SettingsRepository(context: Context) {
         val scope = stringPreferencesKey("apply_scope")
         val enableExifTap = booleanPreferencesKey("enable_exif_tap")
         val exifPosition = stringPreferencesKey("exif_position")
+        val scaleType = stringPreferencesKey("scale_type")
+        val orientationFilter = stringPreferencesKey("orientation_filter")
     }
 
     val configFlow: Flow<PlaybackConfig> = store.data.map { p ->
@@ -48,8 +52,27 @@ class SettingsRepository(context: Context) {
                 ExifPosition.BOTTOM_LEFT.name -> ExifPosition.BOTTOM_LEFT
                 ExifPosition.CENTER.name -> ExifPosition.CENTER
                 else -> ExifPosition.BOTTOM_RIGHT
+            },
+            imgDisplayMode = when (p[Keys.scaleType]) {
+                ImgDisplayMode.FIT_CENTER.name -> ImgDisplayMode.FIT_CENTER
+                ImgDisplayMode.SMART.name -> ImgDisplayMode.SMART
+                else -> ImgDisplayMode.FILL_SCREEN
             }
         )
+    }
+
+    val orientationFilterFlow: Flow<OrientationFilter> = store.data.map { p ->
+        when (p[Keys.orientationFilter]) {
+            OrientationFilter.LANDSCAPE.name -> OrientationFilter.LANDSCAPE
+            OrientationFilter.PORTRAIT.name -> OrientationFilter.PORTRAIT
+            else -> OrientationFilter.ALL
+        }
+    }
+
+    suspend fun setOrientationFilter(filter: OrientationFilter) {
+        store.edit { p ->
+            p[Keys.orientationFilter] = filter.name
+        }
     }
 
     suspend fun update(block: (PlaybackConfig) -> PlaybackConfig) {
@@ -74,6 +97,11 @@ class SettingsRepository(context: Context) {
                     ExifPosition.BOTTOM_LEFT.name -> ExifPosition.BOTTOM_LEFT
                     ExifPosition.CENTER.name -> ExifPosition.CENTER
                     else -> ExifPosition.BOTTOM_RIGHT
+                },
+                imgDisplayMode = when (p[Keys.scaleType]) {
+                    ImgDisplayMode.FIT_CENTER.name -> ImgDisplayMode.FIT_CENTER
+                    ImgDisplayMode.SMART.name -> ImgDisplayMode.SMART
+                    else -> ImgDisplayMode.FILL_SCREEN
                 }
             )
             val next = block(current)
@@ -84,6 +112,7 @@ class SettingsRepository(context: Context) {
             p[Keys.scope] = next.applyScope.name
             p[Keys.enableExifTap] = next.enableExifTap
             p[Keys.exifPosition] = next.exifPosition.name
+            p[Keys.scaleType] = next.imgDisplayMode.name
         }
     }
 }

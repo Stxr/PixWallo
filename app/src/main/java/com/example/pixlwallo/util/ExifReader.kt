@@ -65,34 +65,103 @@ object ExifReader {
                 
                 val iso = exif.getAttribute(ExifInterface.TAG_ISO_SPEED_RATINGS)
                     ?: exif.getAttribute(ExifInterface.TAG_ISO)
-                
+                    ?: exif.getAttribute(ExifInterface.TAG_RW2_ISO)
+
                 val aperture = try {
-                    val fNumber = exif.getAttributeDouble(ExifInterface.TAG_F_NUMBER, 0.0)
-                    if (fNumber > 0) "f/${fNumber}" else null
+                    // 先尝试获取字符串格式（可能是 Rational 格式如 "35/10"）
+                    val fNumberStr = exif.getAttribute(ExifInterface.TAG_F_NUMBER)
+                    if (fNumberStr != null) {
+                        // 尝试解析 Rational 格式
+                        val fNumber = if (fNumberStr.contains("/")) {
+                            val parts = fNumberStr.split("/")
+                            if (parts.size == 2) {
+                                val num = parts[0].toDoubleOrNull() ?: 0.0
+                                val den = parts[1].toDoubleOrNull() ?: 1.0
+                                if (den > 0) num / den else 0.0
+                            } else {
+                                fNumberStr.toDoubleOrNull() ?: 0.0
+                            }
+                        } else {
+                            fNumberStr.toDoubleOrNull() ?: 0.0
+                        }
+                        if (fNumber > 0) {
+                            // 格式化光圈值，保留一位小数
+                            if (fNumber % 1.0 == 0.0) {
+                                "f/${fNumber.toInt()}"
+                            } else {
+                                String.format("f/%.1f", fNumber)
+                            }
+                        } else {
+                            null
+                        }
+                    } else {
+                        // 如果字符串格式获取失败，尝试直接获取 double
+                        val fNumber = exif.getAttributeDouble(ExifInterface.TAG_F_NUMBER, 0.0)
+                        if (fNumber > 0) {
+                            if (fNumber % 1.0 == 0.0) {
+                                "f/${fNumber.toInt()}"
+                            } else {
+                                String.format("f/%.1f", fNumber)
+                            }
+                        } else {
+                            null
+                        }
+                    }
                 } catch (e: Exception) {
-                    exif.getAttribute(ExifInterface.TAG_F_NUMBER)?.let { "f/$it" }
+                    null
                 }
                 
-                val exposureTime = exif.getAttribute(ExifInterface.TAG_EXPOSURE_TIME)?.let {
+                val exposureTime = exif.getAttribute(ExifInterface.TAG_EXPOSURE_TIME)?.let { expTimeStr ->
                     try {
-                        val expTime = it.toDouble()
-                        if (expTime < 1) {
-                            "${(1 / expTime).toInt()}/1"
+                        // 尝试解析 Rational 格式（如 "1/60"）
+                        val expTime = if (expTimeStr.contains("/")) {
+                            val parts = expTimeStr.split("/")
+                            if (parts.size == 2) {
+                                val num = parts[0].toDoubleOrNull() ?: 0.0
+                                val den = parts[1].toDoubleOrNull() ?: 1.0
+                                if (den > 0) num / den else 0.0
+                            } else {
+                                expTimeStr.toDoubleOrNull() ?: 0.0
+                            }
                         } else {
-                            "${expTime}s"
+                            expTimeStr.toDoubleOrNull() ?: 0.0
+                        }
+                        
+                        if (expTime > 0) {
+                            if (expTime < 1.0) {
+                                "1/${kotlin.math.round(1.0 / expTime).toInt()}"
+                            } else {
+                                "${expTime}s"
+                            }
+                        } else {
+                            expTimeStr
                         }
                     } catch (e: Exception) {
-                        it
+                        expTimeStr
                     }
                 }
                 
-                val focalLength = exif.getAttribute(ExifInterface.TAG_FOCAL_LENGTH)?.let {
-                    try {
-                        val focal = it.toDouble()
-                        "${focal.toInt()}mm"
-                    } catch (e: Exception) {
-                        it
+                val focalLength = try {
+                    // 优先尝试获取等效焦距 (35mm format)
+                    val focal35mm = exif.getAttributeInt(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, 0)
+                    if (focal35mm > 0) {
+                        "${focal35mm}mm"
+                    } else {
+                        // 如果没有等效焦距，使用物理焦距
+                        val focal = exif.getAttributeDouble(ExifInterface.TAG_FOCAL_LENGTH, 0.0)
+                        if (focal > 0) {
+                            // 如果是整数，显示整数；否则保留一位小数
+                            if (focal % 1.0 == 0.0) {
+                                "${focal.toInt()}mm"
+                            } else {
+                                String.format("%.1fmm", focal)
+                            }
+                        } else {
+                            exif.getAttribute(ExifInterface.TAG_FOCAL_LENGTH)
+                        }
                     }
+                } catch (e: Exception) {
+                    exif.getAttribute(ExifInterface.TAG_FOCAL_LENGTH)
                 }
                 
                 val flash = exif.getAttributeInt(ExifInterface.TAG_FLASH, -1).let {

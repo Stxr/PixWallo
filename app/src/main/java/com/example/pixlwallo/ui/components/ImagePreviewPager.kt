@@ -15,6 +15,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -27,7 +28,15 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
+import androidx.compose.foundation.Image
+import androidx.compose.ui.draw.rotate
+import android.graphics.Bitmap
+import android.graphics.Matrix
+import coil.compose.AsyncImagePainter
+import coil.compose.rememberAsyncImagePainter
+import coil.request.ImageRequest
+import coil.size.Size
+import coil.transform.Transformation
 import com.example.pixlwallo.data.SettingsRepository
 import com.example.pixlwallo.model.ExifPosition
 import com.example.pixlwallo.model.PlaybackConfig
@@ -51,6 +60,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.geometry.isSpecified
+import com.example.pixlwallo.model.ImgDisplayMode
 
 /**
  * 可复用的图片预览组件
@@ -211,16 +222,105 @@ fun ImagePreviewPager(
                     if (hasError) {
                         Text("无法加载图片", color = Color.White)
                     } else {
-                        AsyncImage(model = images[page % images.size],
+                        val currentImage = images[page % images.size]
+                        
+                        // 使用状态来跟踪是否需要旋转
+                        var shouldRotate by remember(page, cfg.imgDisplayMode, currentImage) { 
+                            mutableStateOf<Boolean?>(null) 
+                        }
+                        
+                        // 当图片或配置改变时，尝试从 EXIF 缓存中预先判断尺寸
+                        LaunchedEffect(currentImage, cfg.imgDisplayMode, exifCache[page]) {
+                            shouldRotate = null
+                            // 如果 EXIF 缓存中有尺寸信息，立即判断是否需要旋转
+                            val exif = exifCache[page]
+                            if (exif != null && exif.width != null && exif.height != null) {
+                                if (exif.height > exif.width && cfg.imgDisplayMode == ImgDisplayMode.SMART) {
+                                    shouldRotate = true
+                                } else {
+                                    shouldRotate = false
+                                }
+                            }
+                        }
+                        
+                        // 根据 shouldRotate 状态决定使用哪个 model
+                        // 使用 remember 缓存，只在真正需要时重新计算
+                        val imageModel = remember(currentImage.toString(), shouldRotate) {
+                            when (shouldRotate) {
+                                true -> {
+                                    // 需要在加载时旋转
+                                    ImageRequest.Builder(context)
+                                        .data(currentImage)
+                                        .transformations(RotationTransformation(-90f))
+                                        .build()
+                                }
+                                false, null -> {
+                                    // 不需要旋转或初始状态，使用普通加载
+                                    currentImage
+                                }
+                            }
+                        }
+                        
+                        // rememberAsyncImagePainter 会根据 model 的变化自动处理
+                        val painter = rememberAsyncImagePainter(
+                            model = imageModel,
+                            onState = { state ->
+                                when (state) {
+                                    is AsyncImagePainter.State.Error -> errorUris[page] = true
+                                    is AsyncImagePainter.State.Success -> {
+                                        errorUris.remove(page)
+                                        // 如果 EXIF 信息还没有，从加载的图片中检查尺寸
+                                        if (shouldRotate == null) {
+                                            val size = state.painter.intrinsicSize
+                                            if (size.isSpecified && size.height > size.width && cfg.imgDisplayMode == ImgDisplayMode.SMART) {
+                                                shouldRotate = true
+                                            } else {
+                                                shouldRotate = false
+                                            }
+                                        }
+                                    }
+                                    else -> {}
+                                }
+                            }
+                        )
+
+                        var modifier = Modifier.fillMaxSize()
+                        val contentScale: ContentScale
+
+                        if (painter.state is AsyncImagePainter.State.Success) {
+                            val size = painter.intrinsicSize
+                            // 如果已经旋转，尺寸会交换，所以需要检查旋转后的尺寸
+                            val isPortrait = if (shouldRotate == true) {
+                                // 已旋转，原来的竖屏现在变成横屏
+                                size.isSpecified && size.width > size.height
+                            } else {
+                                size.isSpecified && size.height > size.width
+                            }
+                            
+                            if (isPortrait && shouldRotate != true) {
+                                // 竖屏照片（未旋转）：根据配置决定显示方式
+                                contentScale = when (cfg.imgDisplayMode) {
+                                    ImgDisplayMode.FILL_SCREEN -> ContentScale.Crop // 填满屏幕（裁剪）
+                                    ImgDisplayMode.FIT_CENTER -> ContentScale.Fit   // 完整显示（留黑）
+                                    ImgDisplayMode.SMART -> {
+                                        // 智能模式：已在加载时旋转，直接填满屏幕
+                                        ContentScale.Crop
+                                    }
+                                }
+                            } else {
+                                // 横屏照片或已旋转的竖屏照片：始终填满屏幕
+                                contentScale = ContentScale.Crop
+                            }
+                        } else {
+                            contentScale = ContentScale.Crop
+                        }
+
+                        Image(
+                            painter = painter,
                             contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                            onError = {
-                                errorUris[page] = true
-                            },
-                            onSuccess = {
-                                errorUris.remove(page)
-                            })
+                            contentScale = contentScale,
+                            modifier = modifier
+                        )
                     }
                 }
             }
@@ -326,6 +426,19 @@ private suspend fun moveToNextPage(
         withContext(NonCancellable) {
             pagerState.animateScrollToPage(nextPage)
         }
+    }
+}
+
+/**
+ * 自定义旋转变换类
+ */
+private class RotationTransformation(private val degrees: Float) : Transformation {
+    override val cacheKey: String
+        get() = "RotationTransformation(degrees=$degrees)"
+
+    override suspend fun transform(input: Bitmap, size: Size): Bitmap {
+        val matrix = Matrix().apply { postRotate(degrees) }
+        return Bitmap.createBitmap(input, 0, 0, input.width, input.height, matrix, true)
     }
 }
 

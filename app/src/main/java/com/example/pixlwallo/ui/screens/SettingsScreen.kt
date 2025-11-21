@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -21,7 +20,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
@@ -39,7 +37,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -59,6 +56,7 @@ import com.example.pixlwallo.model.ApplyScope
 import com.example.pixlwallo.model.ExifPosition
 import com.example.pixlwallo.model.PlaybackConfig
 import com.example.pixlwallo.model.PlaybackOrder
+import com.example.pixlwallo.model.ImgDisplayMode
 import com.example.pixlwallo.util.PermissionHelper
 import com.example.pixlwallo.util.DreamHelper
 import kotlinx.coroutines.delay
@@ -267,6 +265,84 @@ fun SettingsScreen(nav: NavController) {
                                 onClick = {
                                     expanded = false
                                     runBlocking { repo.update { it.copy(order = PlaybackOrder.RANDOM) } }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 竖屏照片显示策略
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            "竖屏照片显示",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    var expandedScale by remember { mutableStateOf(false) }
+                    Box {
+                        FilledTonalButton(
+                            onClick = { expandedScale = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(
+                                when (cfg.imgDisplayMode) {
+                                    ImgDisplayMode.FILL_SCREEN -> "填满屏幕 (裁剪)"
+                                    ImgDisplayMode.FIT_CENTER -> "完整显示 (留黑)"
+                                    ImgDisplayMode.SMART -> "智能旋转 (填满)"
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                            Icon(
+                                Icons.Default.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = expandedScale,
+                            onDismissRequest = { expandedScale = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("填满屏幕 (裁剪)") },
+                                onClick = {
+                                    expandedScale = false
+                                    runBlocking { repo.update { it.copy(imgDisplayMode = ImgDisplayMode.FILL_SCREEN) } }
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("完整显示 (留黑)") },
+                                onClick = {
+                                    expandedScale = false
+                                    runBlocking { repo.update { it.copy(imgDisplayMode = ImgDisplayMode.FIT_CENTER) } }
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("智能旋转 (填满)") },
+                                onClick = {
+                                    expandedScale = false
+                                    runBlocking { repo.update { it.copy(imgDisplayMode = ImgDisplayMode.SMART) } }
                                 }
                             )
                         }
